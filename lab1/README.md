@@ -140,3 +140,131 @@
 
 ### 练习三 分析bootloader进入保护模式的过程
 
+
+###练习四
+
+分析 bootloader 加载 ELF 格式的 OS 的过程
+
+在练习三中已经知道，bootasm.S文件实现了开启A20，初始化GDT表，进入保护模式 的功能。查阅资料可知这一阶段实现的功能主要是 检测系统内存映射 将内核映像和根文件系统映像从Flash读到RAM 为内核设置启动参数 最终调用内核
+
+####4.1 bootloader如何读取硬盘扇区的？
+
+读取硬盘扇区的操作在bootmain.c中相关的部分代码如下   对其进行分析并加以注释
+
+ * ```
+  static void
+  waitdisk(void) {
+      while ((inb(0x1F7) & 0xC0) != 0x40)   //不断检查IO地址0x1F7的状态，判断硬盘是否空闲
+          /* do nothing */;
+  }//等待硬盘盘空闲 
+  
+  /* readsect - read a single sector at @secno into @dst */
+  static void
+  readsect(void *dst, uint32_t secno) {
+      // wait for disk to be ready
+      waitdisk();
+  
+  outb(0x1F2, 1);                    // count = 1  IO地址0x1f2 功能:要读写的扇区数为1
+  
+  outb(0x1F3, secno & 0xFF);          
+  outb(0x1F4, (secno >> 8) & 0xFF);     
+  outb(0x1F5, (secno >> 16) & 0xFF);    
+  outb(0x1F6, ((secno >> 24) & 0xF) | 0xE0); 
+  //以上四行代码为LBA模式下传入的参数  (读取该扇区)
+  outb(0x1F7, 0x20);                      // cmd 0x20 - read sectors
+  //读取扇区 
+  // wait for disk to be ready
+  waitdisk();
+  //等待硬盘空闲
+  // read a sector
+  insl(0x1F0, dst, SECTSIZE / 4);
+  //用inline 函数 isnl(uint32_t port, void *addr, int cnt)实现
+  //从0x1f0开始读取，总字节数为SECTSIZE字节数，一直读取到dst位置,每次读四个字节，共SECTSIZE/4次
+  }
+  
+  ```
+
+  根据以上代码分析可知，bootloader读取硬盘扇区的过程如下
+
+  1.等待硬盘空闲：调用waitdisk()函数，不断检查IO地址0x1F7的状态，判断硬盘是否空闲
+
+  2.硬盘空闲时调用outb()函数描述所要读取扇区，并发出读取扇区的指令
+
+  3.再次等待硬盘空闲
+
+  4.硬盘再次空闲时调用内联函数insl，从0x1f0开始读取，总字节数为SECTSIZE字节数，一直读取到dst位置,每次读四个字节，共SECTSIZE/4次
+
+####4.2 bootloader是如何加载ELF格式的OS？
+
+#####(1) readseg函数
+
+readseg函数代码如下  对其进行分析和注释 
+
+```
+static void
+readseg(uintptr_t va, uint32_t count, uint32_t offset) {
+    uintptr_t end_va = va + count;   //end_va设置为所要读取的地址的尾部
+
+    // round down to sector boundary   （向下舍入到扇区边界）
+    va -= offset % SECTSIZE; 
+    
+    // translate from bytes to sectors; kernel starts at sector 1 
+    //（从字节转换为扇区； 内核从扇区1开始）
+    uint32_t secno = (offset / SECTSIZE) + 1;
+    
+    // If this is too slow, we could read lots of sectors at a time.
+    // We'd write more to memory than asked, but it doesn't matter --
+    // we load in increasing order.
+    for (; va < end_va; va += SECTSIZE, secno ++) {
+        readsect((void *)va, secno);
+        //通过循环调用readsect函数从扇区读取数据写入va指向的内存区域
+    }
+
+}
+```
+
+#####(2)bootmain函数
+
+```
+bootmain(void) {
+    // read the 1st page off disk
+    readseg((uintptr_t)ELFHDR, SECTSIZE * 8, 0);
+
+// is this a valid ELF?
+if (ELFHDR->e_magic != ELF_MAGIC) {
+    goto bad;
+}
+//读取文件头  判断是否为有效的ELF文件
+struct proghdr *ph, *eph;
+
+// load each program segment (ignores ph flags)
+ph = (struct proghdr *)((uintptr_t)ELFHDR + ELFHDR->e_phoff);
+//把ELF文件头中的Program header table存在ph中
+eph = ph + ELFHDR->e_phnum;
+//按照Program header table将ELF文件中的数据写入内存
+for (; ph < eph; ph ++) {
+    readseg(ph->p_va & 0xFFFFFF, ph->p_memsz, ph->p_offset);
+}   //循环调用readseg  向内存写入数据
+
+// call the entry point from the ELF header   从ELF头的入口信息找到程序入口
+// note: does not return
+((void (*)(void))(ELFHDR->e_entry & 0xFFFFFF))();
+
+bad:
+    outw(0x8A00, 0x8A00);
+    outw(0x8A00, 0x8E00);
+
+    /* do nothing */
+    while (1);
+
+}
+```
+
+根据以上代码分析可知，bootloader加载ELF格式的OS的过程如下
+
+1.读取文件ELF头，判断是否为有效的ELF文件；若是，则存储其Program header地址，若不是，则go bad。
+
+2.按照Program header table 循环调用readseg  向内存写入数据
+
+3.根据ELF头中的入口信息，找到OS内核的入口
+
