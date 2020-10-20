@@ -140,3 +140,151 @@
 
 ### 练习三 分析bootloader进入保护模式的过程
 
+​		bootloader的首要任务是启动保护模式。通过这个练习可以了解到如何开启A20;CPU是如何从实模式转换到保护模式;如何初始化和使用GDT表的。通过分析boot/bootasm.S，我们可以具体看到整个过程。
+
+##### 1. 关闭中断，将各个段寄存器重置：
+
+```asm
+#include <asm.h>		# asm.h 包含许多的宏定义，包括常量和“函数”（应该是地址转换的函数）。
+
+# Start the CPU: switch to 32-bit protected mode, jump into C.
+# The BIOS loads this code from the first sector of the hard disk into
+# memory at physical address 0x7c00 and starts executing in real mode
+# with %cs=0 %ip=7c00.
+
+
+# 内核代码段段地址[段选择器]
+.set PROT_MODE_CSEG,        0x8                     # kernel code segment selector
+# 内核Data段段地址[段选择器]
+.set PROT_MODE_DSEG,        0x10                    # kernel data segment selector
+# 保护模式的flag
+.set CR0_PE_ON,             0x1                     # protected mode enable flag
+
+# start address should be 0:7c00, in real mode, the beginning address of the running bootloader
+.globl start
+start:
+# 在16位模式下，首先关闭中断
+.code16                                             # Assemble for 16-bit mode
+    cli                                             # Disable interrupts
+    cld                                             # String operations increment
+    
+    # 将各个段寄存器置0
+     # Set up the important data segment registers (DS, ES, SS).
+    xorw %ax, %ax                                   # Segment number zero
+    movw %ax, %ds                                   # -> Data Segment
+    movw %ax, %es                                   # -> Extra Segment
+    movw %ax, %ss                                   # -> Stack Segment
+```
+
+##### 2. 开启/关闭A20：
+
+> ​	i8086的CPU数据总线是16bit，地址总线是20bit，寄存器是16bit，CPU只能访问1MB以内的空间，数据总线和寄存器只有16bit，想要获取20bit的数据，需要做一些额外的操作如移位，CPU通过对segment(大小恒为64K)进行移位后和offset一起组成20bit的地址，这个地址就是实模式下访问内存的地址。20bit的地址理论可以访问1MB的内存空间，这在i8086中是没有问题的，但是到了i80386，CPU有了更宽的地址总线，数据总线和寄存器后，在实模式下，我们可以访问超过1MB的空间，但我们只希望访问到1MB的空间，因此CPU添加了一个可控制A20地址线模块，通过该模块，在实模式下将第20bit的地址线限制为0，进入保护模式后，再通过这个模块解除对A20地址线的限制，这样就又能访问超过1MB的内存空间了。
+
+​		然后将A20置1，使得全部32条地址线可用：
+
+```asm
+    # Enable A20:
+    #  For backwards compatibility with the earliest PCs, physical
+    #  address line 20 is tied low, so that addresses higher than
+    #  1MB wrap around to zero by default. This code undoes this.
+
+#启用A20
+seta20.1:
+#等待键盘缓冲区为空，再给键盘发信号
+    inb $0x64, %al           # Wait for not busy(8042 input buffer empty).
+    testb $0x2, %al          # 如果 %al 第低2位为1，则ZF = 0, 则跳转
+    jnz seta20.1             # 如果 %al 第低2位为0，则ZF = 1, 则不跳转
+
+#向0x64端口发送指令，告诉它要写它的p2
+    movb $0xd1, %al          # 0xd1 -> port 0x64
+    outb %al, $0x64          # 0xd1 means: write data to 8042's P2 port
+
+seta20.2:
+    inb $0x64, %al           # Wait for not busy(8042 input buffer empty).
+    testb $0x2, %al
+    jnz seta20.2
+
+#在键盘不忙的时候（检查键盘的status register)，写键盘的input buffer，将A20置为高电平
+	movb $0xdf, %al             # 0xdf -> port 0x60
+    outb %al, $0x60          # 0xdf = 11011111, means set P2's A20 bit(the 1 bit) to 1
+```
+
+##### 3. 加载GDT表：
+
+​		GDT全称Global Descriptor Table，全局描述表，在保护模式下，为了更好地管理4G的可寻址（物理地址）空间，采用了分段存储管理机制，以支持存储共享、保护、虚拟存储等。每个段以起始地址和长度限制表示（它还包含一些属性，如粒度、类型、特权级、存在位、已访问位）。分段地址转换是需要访问它，取段基址。像是data segment，code segment，就是由此管理。
+
+```asm
+    # 全局描述符表：存放8字节的段描述符，段描述符包含段的属性。
+    # 段选择符：总共16位，高13位用作全局描述符表中的索引位，GDT的第一项总是设为0，
+    #   因此孔断选择符的逻辑地址会被认为是无效的，从而引起一个处理器异常。GDT表项
+    #   最大数目是8191个，即2^13 - 1.
+    # Switch from real to protected mode, using a bootstrap GDT
+    # and segment translation that makes virtual addresses
+    # identical to physical addresses, so that the
+    # effective memory map does not change during the switch.
+    lgdt gdtdesc
+```
+
+​		在bootasm.S最后给出了gdt相关定义的代码：
+
+```asm
+# Bootstrap GDT
+.p2align 2                                          # force 4 byte alignment
+gdt:
+	# 空段描述符
+    SEG_NULLASM                                     # null seg
+    # 放bootloader，kernel 的 code seg
+    SEG_ASM(STA_X|STA_R, 0x0, 0xffffffff)           # code seg for bootloader and kernel
+    # 放bootloader，kernel 的 data seg
+    SEG_ASM(STA_W, 0x0, 0xffffffff)                 # data seg for bootloader and kernel
+
+gdtdesc:  # gdt的描述符：长度与起始位置
+    .word 0x17                                      # sizeof(gdt) - 1
+    .long gdt                                       # address gdt
+```
+
+​		至于为什么GDT的第0项是空描述符：一个任务使用的所有段都是系统全局的，它不需要用LDT来存储私有段信息，当系统切换到这种任务时，会将LDTR寄存器赋值成一个空（全局描述符）选择子，选择子的描述符索引值为0，TI指示位为0，RPL可以为任意值，用这种方式表明当前任务没有LDT。这里的空选择子因为TI为0，所以它实际上指向了GDT的第0项描述符。所以第0项需要时空的，而LDT就不需要。
+
+##### 4. 从实模式转换到保护模式：
+
+```asm
+    # 将cr0寄存器中PE对应位置位1，开启保护模式。然后去保护模式对应代码处。
+    movl %cr0, %eax
+    orl $CR0_PE_ON, %eax
+    movl %eax, %cr0
+    
+    # Jump to next instruction, but in 32-bit code segment.
+    # Switches processor into 32-bit mode.
+    #长跳转到32位代码段，重装CS和EIP
+    ljmp $PROT_MODE_CSEG, $protcseg
+```
+
+##### 5. 重装段寄存器：
+
+```asm
+.code32                                             # Assemble for 32-bit mode
+protcseg:
+    # Set up the protected-mode data segment registers
+    # 初始化每个段寄存器。
+    movw $PROT_MODE_DSEG, %ax                       # Our data segment selector
+    movw %ax, %ds                                   # -> DS: Data Segment
+    movw %ax, %es                                   # -> ES: Extra Segment
+    movw %ax, %fs                                   # -> FS
+    movw %ax, %gs                                   # -> GS
+    movw %ax, %ss                                   # -> SS: Stack Segment
+```
+
+##### 6. 成功转换到保护模式，进入bootmain函数：
+
+```asm
+    # Set up the stack pointer and call into C. The stack region is from 0--start(0x7c00)
+    #栈指针初始化为$0x7c00,并进入bootmain。
+    movl $0x0, %ebp
+    movl $start, %esp
+    call bootmain
+
+    # If bootmain returns (it shouldn't), loop.
+spin:
+    jmp spin
+```
+
