@@ -36,8 +36,10 @@ void
 idt_init(void) {
   extern uintptr_t __vectors[]; //_vevtors数组保存在vectors.S中的256个中断处理例程的入口地址
 
- for (int i=0;i<sizeof(idt);i+=sizeof(struct gatedesc))
-     SETGATE(idt[i],0,GD_KTEXT,__vectors[i],DPL_KERNEL);
+ for (int i=0;i<sizeof(idt)/sizeof(struct gatedesc);i++)
+    { 
+SETGATE(idt[i],0,GD_KTEXT,__vectors[i],DPL_KERNEL);
+}
  /*循环调用SETGATE函数对中断门idt[i]依次进行初始化
    其中第一个参数为初始化模板idt[i]；第二个参数为0，表示中断门；第三个参数GD_KTEXT为内核代码段的起始地址；第四个参数_vector[i]为中断处理例程的入口地址；第五个参数表示内核权限\*/
  SETGATE(idt[T_SWITCH_TOK],0,GD_KTEXT,__vectors[T_SWITCH_TOK],DPL_USER);
@@ -149,7 +151,6 @@ trap_dispatch(struct trapframe *tf) {
  ticks ++;
         if (ticks % TICK_NUM == 0) {
             print_ticks();
-ticks=0;
         }
         break;
     case IRQ_OFFSET + IRQ_COM1:
