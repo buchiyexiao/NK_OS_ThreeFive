@@ -34,17 +34,15 @@ static struct pseudodesc idt_pd = {
 /* idt_init - initialize IDT to each of the entry points in kern/trap/vectors.S */
 void
 idt_init(void) {
-  extern uintptr_t __vectors[]; //_vevtors数组保存在vectors.S中的256个中断处理例程的入口地址
+    extern uintptr_t __vectors[]; //_vevtors数组保存在vectors.S中的256个中断处理例程的入口地址
 
- for (int i=0;i<sizeof(idt)/sizeof(struct gatedesc);i++)
-    { 
-SETGATE(idt[i],0,GD_KTEXT,__vectors[i],DPL_KERNEL);
-}
+    for (int i=0;i<sizeof(idt);i+=sizeof(struct gatedesc))
+        SETGATE(idt[i],0,GD_KTEXT,__vectors[i],DPL_KERNEL);
  /*循环调用SETGATE函数对中断门idt[i]依次进行初始化
    其中第一个参数为初始化模板idt[i]；第二个参数为0，表示中断门；第三个参数GD_KTEXT为内核代码段的起始地址；第四个参数_vector[i]为中断处理例程的入口地址；第五个参数表示内核权限\*/
- SETGATE(idt[T_SWITCH_TOK],0,GD_KTEXT,__vectors[T_SWITCH_TOK],DPL_USER);
+    SETGATE(idt[T_SWITCH_TOK],0,GD_KTEXT,__vectors[T_SWITCH_TOK],DPL_USER);
 
-lidt(&idt_pd);
+    lidt(&idt_pd);
 //加载idt中断描述符表，并将&idt_pd的首地址加载到IDTR中
 }
 
@@ -151,7 +149,7 @@ trap_dispatch(struct trapframe *tf) {
  ticks ++;
         if (ticks % TICK_NUM == 0) {
             print_ticks();
-            ticks=0;
+ticks=0;
         }
         break;
     case IRQ_OFFSET + IRQ_COM1:
@@ -164,8 +162,19 @@ trap_dispatch(struct trapframe *tf) {
         break;
     //LAB1 CHALLENGE 1 : YOUR CODE you should modify below codes.
     case T_SWITCH_TOU:
+        if (tf->tf_cs != USER_CS) { //要保证自己再对应的模式中
+            tf->tf_cs = USER_CS;
+            tf->tf_ds = tf->tf_es = tf->tf_ss = USER_DS;
+            tf->tf_eflags |= FL_IOPL_MASK;
+            print_trapframe(tf);
+        }
+        break;
     case T_SWITCH_TOK:
-        panic("T_SWITCH_** ??\n");
+        if (tf->tf_cs != KERNEL_CS) {
+            tf->tf_cs = KERNEL_CS;
+            tf->tf_ds = tf->tf_es = KERNEL_DS;
+            tf->tf_eflags &= ~FL_IOPL_MASK;
+        }
         break;
     case IRQ_OFFSET + IRQ_IDE1:
     case IRQ_OFFSET + IRQ_IDE2:

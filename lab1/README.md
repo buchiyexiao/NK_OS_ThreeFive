@@ -615,3 +615,90 @@ trap(struct trapframe *tf) {
         break;
 ```
 
+### Challenge 1 (内核态和用户态的转换)
+
+#### 增加一个syscall功能，即增加一个用户态函数，可以执行获取时钟计数值，当内核初始化完毕后，可以从内核态返回到用户态的函数，而用户态的函数又通过系统调用得到内核态的服务
+
+（开始吐槽）从Chanllenge开始感觉和前面的练习最大的差别就是在于前面的练习编程部分感觉只需要跟着注释或者提示一步步走就可以解决，突然做到Challenge感觉没有提供特别多的注释信息，仅仅是提出了切换用户态和内核态的方法，也就是中断，内核态和用户态指的就是我们和老师（大雾），也就是ring0和ring3两个特权等级
+
+我们要实现两个中断，也就是在R0和R3之间进行切换，主要是经过以下步骤：
+
+1. 栈切换
+2. 保存EFLAGS，代码段选择器，EIP，堆栈段选择器和堆栈指针
+3. 执行中断
+4. 通用寄存器被保存，更改段选择器
+5. 离开中断
+
+根据查阅一些信息和简单的速览代码（trapentry.S里面基本上全是它），中断向量的调用都在trapentry.S/__alltraps中
+
+```asm
+#include <memlayout.h>
+
+# vectors.S sends all traps here.
+.text
+.globl __alltraps
+__alltraps:
+    # push registers to build a trap frame
+    # therefore make the stack look like a struct trapframe
+    # 保存16位 寄存器 入栈32位 多余的16位是"padding"
+    pushl %ds
+    pushl %es
+    pushl %fs
+    pushl %gs
+    # 保存eflags 和 32位寄存器
+    pushal
+
+    # load GD_KDATA into %ds and %es to set up data segments for kernel
+    # GD_KDATA是kernel data segment的描述符 将其存入ds段和es段
+    movl $GD_KDATA, %eax
+    movw %ax, %ds
+    movw %ax, %es
+
+    # trap需要一个trapframe的指针作为参数
+    # push %esp to pass a pointer to the trapframe as an argument to trap()
+    pushl %esp
+
+    # call trap(tf), where tf=%esp
+    call trap
+
+    # pop the pushed stack pointer
+    popl %esp
+
+    # return falls through to trapret...
+.globl __trapret
+__trapret:
+    # restore registers from stack
+    # 恢复
+    popal
+
+    # restore %ds, %es, %fs and %gs
+    popl %gs
+    popl %fs
+    popl %es
+    popl %ds
+
+    # get rid of the trap number and error code
+    addl $0x8, %esp
+    iret
+
+
+```
+
+接入trap函数的执行后，通过iret指令调用恢复cs，eflag和eip，因此我们的目的就是把这些变成转换到的模式的地址
+
+![image-20201021193212060](img/image-20201021193212060.png)
+
+最后在init.c中加入主动调用system call的汇编代码
+
+![image-20201021193502349](img/image-20201021193502349.png)
+
+上面切换到user前esp减8的原因是因为这实验就不是正常人想出来的实验，正常人调用中断的前后特权级别都是相同的，那么对栈的转换也就没什么考虑，低优先级别转换为高优先级别的时候，原来的ss和esp都被入栈，ss被自动切换为内核态的段选择器，而中断结束的时候已经变成R0，所以不会出栈，也就不用在转R0的时候-8，但是当高向低转的时候，iret还会把ss和esp出栈，虽然他们根本就没有入，因此需要提前留出8bytes。
+
+然后就可以很高兴的收获0/40的grade了！！！！
+
+![image-20201021194222129](img/image-20201021194222129.png)
+
+然后我查阅了一些别人做这个实验的报告，终于发现了问题所在！！！
+需要在ldt初始化的时候，更改“转到kernel中断”的DPL为user，否则User就执行不了它了
+
+![1](img/1.png)
