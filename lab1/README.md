@@ -495,3 +495,123 @@ ebp:0x00007bf8 eip:0x00007d73 args:0xc031fcfa 0xc08ed88e 0x64e4d08e 0xfa7502a8
 ```
 
 ​		对应的是第一个使用堆栈的函数（堆栈的结构为从高向低延申）即bootmain.c中的bootmain。bootloader设置的堆栈从0x7c00开始，使用"call bootmain" 转入bootmain函数。call指令压栈，bootmain中ebp为0x7bf8。
+
+### 练习六
+
+#### 6.1 中断描述符表中一个表项占多少字节？其中哪几位代表中断处理代码的入口？
+
+我们在trap.c中找到了中断描述符表idt的定义
+
+```
+/* *
+
+* Interrupt descriptor table:
+  *
+
+ * Must be built at run time because shifted function addresses can't
+ * be represented in relocation records.
+ * */
+   static struct gatedesc idt[256] = {{0}};
+```
+
+其中，结构体gatedesc在mmu.h中进行了声明和定义   其定义如下
+
+```
+ * struct gatedesc {
+       unsigned gd_off_15_0 : 16; //low 16 bits of offset in segment 向低地址16bits位移
+       unsigned gd_ss : 16;            // segment selector  段选择
+       unsigned gd_args : 5;            // # args, 0 for interrupt/trap gates
+       unsigned gd_rsv1 : 3;            // reserved(should be zero I guess)
+       unsigned gd_type : 4;            // type(STS_{TG,IG32,TG32})
+       unsigned gd_s : 1;                // must be 0 (system)
+       unsigned gd_dpl : 2;            // descriptor(meaning new) privilege level
+       unsigned gd_p : 1;                // Present
+       unsigned gd_off_31_16 : 16;   // high bits of offset in segment 向高地址16bit位移
+   };
+```
+
+通过计算可知gatedesc这一结构体共站16+16+5+3+4+1+2+1+16=64bits=8bytes  因此IDT一个表项占8个字节
+
+同时，根据代码注释可知， 由最初的16bits和最后的16bits构成偏移量，由17~32bits作为段描述符，由段描述符的地址加上偏移地址即可得到中断处理代码的入口。
+
+中断描述符表IDT的作用是将每个异常或中断向量分别与它们的处理过程联系起来，与GDT和LDT表类似，IDT也是由8字节长描述符组成的一个数组。除了两个字节的段描述符，偏移量必用四字节来表示；要有反映模式切换的信息。因此，在保护模式下，中断描述符表中的表项由8个字节组成。
+
+#### 6.2完善kern/trap/trap.c中对中断向量表进行初始化的函数idt_init
+
+idt_init函数需要用到SETGATE这个宏，其定义在mmu.h中，用于设置gate的状态。
+
+istrap： 0/1 0表示中断门，1表示陷阱门
+
+sel：表示代码段选择器，选择在内核段还是在用户段中进行处理
+
+off：中断处理程序的地址偏移量
+
+dpl：权限级别 kernel/user
+
+```
+/* *
+ * Set up a normal interrupt/trap gate descriptor
+ * - istrap: 1 for a trap (= exception) gate, 0 for an interrupt gate
+ * - sel: Code segment selector for interrupt/trap handler
+ * - off: Offset in code segment for interrupt/trap handler
+ * - dpl: Descriptor Privilege Level - the privilege level required
+ * for software to invoke this interrupt/trap gate explicitly
+ * using an int instruction.
+ * */
+   #define SETGATE(gate, istrap, sel, off, dpl) {            \
+    (gate).gd_off_15_0 = (uint32_t)(off) & 0xffff;        \
+    (gate).gd_ss = (sel);                                \
+    (gate).gd_args = 0;                                    \
+    (gate).gd_rsv1 = 0;                                    \
+    (gate).gd_type = (istrap) ? STS_TG32 : STS_IG32;    \
+    (gate).gd_s = 0;                                    \
+    (gate).gd_dpl = (dpl);                                \
+    (gate).gd_p = 1;                                    \
+    (gate).gd_off_31_16 = (uint32_t)(off) >> 16;        \
+   }
+```
+
+分析后可以写出对中断向量表进行初始化的函数idt_init的代码，如下
+
+```
+void
+idt_init(void) {
+  extern uintptr_t __vectors[]; //_vevtors数组保存在vectors.S中的256个中断处理例程的入口地址
+
+ for (int i=0;i<sizeof(idt);i+=sizeof(struct gatedesc))
+     SETGATE(idt[i],0,GD_KTEXT,_vectors[i],DPL_KERNEL);
+ /*循环调用SETGATE函数对中断门idt[i]依次进行初始化
+   其中第一个参数为初始化模板idt[i]；第二个参数为0，表示中断门；第三个参数GD_KTEXT为内核代码段的起始地址；第四个参数_vector[i]为中断处理例程的入口地址；第五个参数表示内核权限*/
+ SETGATE(idt[T_SWUTCH_TOK],0,GD_KTEXT,_vectors[T_SWITCH_TOK],DPL_USER);
+
+lidt(&idt_pd);
+//加载idt中断描述符表，并将&idt_pd的首地址加载到IDTR中
+}
+```
+
+
+
+#### 6.3完善trap.c中的中断处理函数trap
+
+查看trap.c中的trap函数代码如下
+
+```
+void
+trap(struct trapframe *tf) {
+    // dispatch based on what type of trap occurred
+    trap_dispatch(tf);
+}
+```
+
+可以看出，trap函数直接调用了trap_dispatch函数，实际上的中断处理实在trap_dispatch中实现的，因此我们对trap_dispatch进行修改。代码实现如下
+
+```
+ case IRQ_OFFSET + IRQ_TIMER: 
+ ticks ++;
+        if (ticks % TICK_NUM == 0) {
+            print_ticks();
+            ticks=0;
+      }
+        break;
+```
+
