@@ -302,5 +302,21 @@ print_stackframe(void) {
       *           NOTICE: the calling funciton's return addr eip  = ss:[ebp+4]
       *                   the calling funciton's ebp = ss:[ebp]
       */
+	    uint32_t ebp = read_ebp();   //(1) call read_ebp() to get the value of ebp. the type is (uint32_t);
+        uint32_t eip = read_eip();   //(2) call read_eip() to get the value of eip. the type is (uint32_t);
+        int i, j;
+        for(i = 0; i < STACKFRAME_DEPTH && ebp != 0; i++) { 
+            //(3) from 0 .. STACKFRAME_DEPTH
+                cprintf("ebp:0x%08x eip:0x%08x", ebp, eip);//(3.1) printf value of ebp, eip
+                uint32_t *arg = (uint32_t *)ebp + 2;
+                cprintf(" arg:");
+                for(j = 0; j < 4; j++) {
+                        cprintf("0x%08x ", arg[j]);
+                }		//(3.2) (uint32_t)calling arguments [0..4] = the contents in address (unit32_t)ebp +2 [0..4]
+                cprintf("\n");	//(3.3) cprintf("\n");
+                print_debuginfo(eip - 1);//(3.4) call print_debuginfo(eip-1) to print the C calling function name and line number, etc.
+                eip = ((uint32_t *)ebp)[1];//(3.5) popup a calling stackframe
+                ebp = ((uint32_t*)ebp)[0];//eip  = ss:[ebp+4]   ebp = ss:[ebp]
+        }
 }
 
