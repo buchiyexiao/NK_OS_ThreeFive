@@ -30,7 +30,7 @@
 
    生成kernel需要很多文件，生成这些文件的makefile为下列的批处理代码
 
-   ![image-20201019195307825](img/image-20201019195307825.png)
+   ![image-20201019195307825](img/image-20201019195307825.png)	
 
    实际代码为，以init.o为例
 
@@ -225,6 +225,38 @@ seta20.2:
     # effective memory map does not change during the switch.
     lgdt gdtdesc
 ```
+
+​		在进入保护模式下需要使用分段的内存空间，因此在进入保护模式前，需要初始化GDT，如下是GDT初始化代码：
+
+```asm
+#define #define SEG_NULLASM                                             \
+    .word 0, 0;                                                 \
+    .byte 0, 0, 0, 0
+
+#define SEG_ASM(type,base,lim)                                  \
+    .word (((lim) >> 12) & 0xffff), ((base) & 0xffff);          \
+    .byte (((base) >> 16) & 0xff), (0x90 | (type)),             \
+        (0xC0 | (((lim) >> 28) & 0xf)), (((base) >> 24) & 0xff)
+
+gdt:
+    /* 有一个特殊的选择子称为空(Null)选择子，它的Index=0，TI=0，而RP
+    L字段可以为任意值。空选择子有特定的用途，当用空选择子进行存储访
+    问时会引起异常。空选择子是特别定义的，它不对应于全局描述符表GDT
+    中的第0个描述符，因此处理器中的第0个描述符总不被处理器访问，一
+    般把它置成全0。*/
+    SEG_NULLASM                                     # null seg
+    
+    /* 在Lab1中, code segment和data segment都可以访问整个内存空间 */
+    SEG_ASM(STA_X|STA_R, 0x0, 0xffffffff)           # code seg for bootloader and kernel
+    SEG_ASM(STA_W, 0x0, 0xffffffff)                 # data seg for bootloader and kernel
+
+gdtdesc:
+    /* lgdt 要先载入GDT的大小, 然后才是gdt的地址 */
+    .word 0x17                                      # sizeof(gdt) - 1
+    .long gdt                                       # address gdt
+```
+
+​		
 
 ​		在bootasm.S最后给出了gdt相关定义的代码：
 
