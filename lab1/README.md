@@ -453,5 +453,45 @@ while (1);
 2.按照Program header table 循环调用readseg  向内存写入数据
 
 3.根据ELF头中的入口信息，找到OS内核的入口
->>>>>>> 328126cc6a2ed8534371df4db023f10c88c96427
 
+
+
+### 练习五
+
+​		通过对kern/debug/kdebug.c::print_stackframe函数的实现，更深刻的理解了函数调用时堆栈的变化情况，以下是编写的函数代码：
+
+```c
+void print_stackframe(void) {
+    	uint32_t ebp = read_ebp();   //(1) call read_ebp() to get the value of ebp. the type is (uint32_t);
+        uint32_t eip = read_eip();   //(2) call read_eip() to get the value of eip. the type is (uint32_t);
+        int i, j;
+        for(i = 0; i < STACKFRAME_DEPTH && ebp != 0; i++) { 
+            //(3) from 0 .. STACKFRAME_DEPTH
+                cprintf("ebp:0x%08x eip:0x%08x", ebp, eip);//(3.1) printf value of ebp, eip
+                uint32_t *arg = (uint32_t *)ebp + 2;
+                cprintf(" arg:");
+                for(j = 0; j < 4; j++) {
+                        cprintf("0x%08x ", arg[j]);
+                }		//(3.2) (uint32_t)calling arguments [0..4] = the contents in address (unit32_t)ebp +2 [0..4]
+                cprintf("\n");	//(3.3) cprintf("\n");
+                print_debuginfo(eip - 1);//(3.4) call print_debuginfo(eip-1) to print the C calling function name and line number, etc.
+                eip = ((uint32_t *)ebp)[1];//(3.5) popup a calling stackframe
+                ebp = ((uint32_t*)ebp)[0];//eip  = ss:[ebp+4]   ebp = ss:[ebp]
+        }
+}
+```
+
+​		ss:ebp指向的堆栈位置存储着caller的ebp，以此为线索可以得到所有使用堆栈的函数ebp。ss:ebp+4指向caller调用时的eip，ss:ebp+8是可能的参数。
+
+​		在lab1中执行“make qemu”命令后得到如下图所示结果
+
+![image-20201021194037862](C:\Users\DELL\AppData\Roaming\Typora\typora-user-images\image-20201021194037862.png)
+
+​		输出中，堆栈最后一行为：
+
+```asm
+ebp:0x00007bf8 eip:0x00007d73 args:0xc031fcfa 0xc08ed88e 0x64e4d08e 0xfa7502a8
+<unknow>: -- 0x00007d72 –
+```
+
+​		对应的是第一个使用堆栈的函数（堆栈的结构为从高向低延申）即bootmain.c中的bootmain。bootloader设置的堆栈从0x7c00开始，使用"call bootmain" 转入bootmain函数。call指令压栈，bootmain中ebp为0x7bf8。
