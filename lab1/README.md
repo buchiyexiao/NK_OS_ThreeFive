@@ -490,11 +490,11 @@ void print_stackframe(void) {
 ​		输出中，堆栈最后一行为：
 
 ```asm
-ebp:0x00007bf8 eip:0x00007d73 args:0xc031fcfa 0xc08ed88e 0x64e4d08e 0xfa7502a8
+ebp:0x00007bf8 eip:0x00007d71 args:0xc031fcfa 0xc08ed88e 0x64e4d08e 0xfa7502a8
 <unknow>: -- 0x00007d72 –
 ```
 
-​		对应的是第一个使用堆栈的函数（堆栈的结构为从高向低延申）即bootmain.c中的bootmain。bootloader设置的堆栈从0x7c00开始，使用"call bootmain" 转入bootmain函数。call指令压栈，bootmain中ebp为0x7bf8。
+​		此时ebp的值是kern_init函数的栈底地址，其中的值对应的是第一个使用堆栈的函数（堆栈的结构为从高向低延申）即bootmain.c中的bootmain的ebp的值。bootloader设置的堆栈从0x7c00开始，使用"call bootmain" 转入bootmain函数。call指令压栈，bootmain中ebp为0x7bf8。 一般来说，args存放的4个dword是对应4个输入参数的值。这里比较特殊，由于bootmain函数调用kern_init并没传递任何输入参数，并且栈顶的位置恰好在boot loader第一条指令存放的地址的上面，而args恰好是kern_int的ebp寄存器指向的栈顶往上第2~5个单元，因此args存放的就是bootloader指令的前16个字节
 
 ### 练习六
 
