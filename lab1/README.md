@@ -702,3 +702,35 @@ __trapret:
 需要在ldt初始化的时候，更改“转到kernel中断”的DPL为user，否则User就执行不了它了
 
 ![1](img/1.png)
+
+### 拓展练习2
+
+基于拓展练习1的代码，直接检查输入字符，实现模式切换。
+
+```
+case IRQ_OFFSET + IRQ_KBD:
+    c = cons_getc();
+     if (c == '0')
+    {
+        if (tf->tf_cs != KERNEL_CS) {
+            tf->tf_cs = KERNEL_CS;
+            tf->tf_ds = tf->tf_es = KERNEL_DS;
+            tf->tf_eflags &= ~FL_IOPL_MASK;
+            cprintf("switch to kernel mode");
+            print_trapframe(tf);// 输出此时trapframe的具体信息
+        }// to kernel mode
+    }
+    if (c == '3')
+    {
+        if (tf->tf_cs != USER_CS) {
+            tf->tf_cs = USER_CS;
+            tf->tf_ds = tf->tf_es = tf->tf_ss = USER_DS;
+            tf->tf_eflags |= FL_IOPL_MASK;
+            cprintf("switch to user mode");
+            print_trapframe(tf);// 输出此时trapframe的具体信息
+        }  // to user mode
+    }
+    cprintf("kbd [%03d] %c\n", c, c);
+    break;
+```
+
