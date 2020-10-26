@@ -247,34 +247,18 @@ gdt:
     问时会引起异常。空选择子是特别定义的，它不对应于全局描述符表GDT
     中的第0个描述符，因此处理器中的第0个描述符总不被处理器访问，一
     般把它置成全0。*/
+    # 空段描述符
     SEG_NULLASM                                     # null seg
     
     /* 在Lab1中, code segment和data segment都可以访问整个内存空间 */
-    SEG_ASM(STA_X|STA_R, 0x0, 0xffffffff)           # code seg for bootloader and kernel
-    SEG_ASM(STA_W, 0x0, 0xffffffff)                 # data seg for bootloader and kernel
-
-gdtdesc:
-    /* lgdt 要先载入GDT的大小, 然后才是gdt的地址 */
-    .word 0x17                                      # sizeof(gdt) - 1
-    .long gdt                                       # address gdt
-```
-
-​		
-
-​		在bootasm.S最后给出了gdt相关定义的代码：
-
-```asm
-# Bootstrap GDT
-.p2align 2                                          # force 4 byte alignment
-gdt:
-	# 空段描述符
-    SEG_NULLASM                                     # null seg
-    # 放bootloader，kernel 的 code seg
+     # 放bootloader，kernel 的 code seg
     SEG_ASM(STA_X|STA_R, 0x0, 0xffffffff)           # code seg for bootloader and kernel
     # 放bootloader，kernel 的 data seg
     SEG_ASM(STA_W, 0x0, 0xffffffff)                 # data seg for bootloader and kernel
 
-gdtdesc:  # gdt的描述符：长度与起始位置
+gdtdesc:
+ # gdt的描述符：长度与起始位置
+    /* lgdt 要先载入GDT的大小, 然后才是gdt的地址 */
     .word 0x17                                      # sizeof(gdt) - 1
     .long gdt                                       # address gdt
 ```
@@ -282,6 +266,8 @@ gdtdesc:  # gdt的描述符：长度与起始位置
 ​		至于为什么GDT的第0项是空描述符：一个任务使用的所有段都是系统全局的，它不需要用LDT来存储私有段信息，当系统切换到这种任务时，会将LDTR寄存器赋值成一个空（全局描述符）选择子，选择子的描述符索引值为0，TI指示位为0，RPL可以为任意值，用这种方式表明当前任务没有LDT。这里的空选择子因为TI为0，所以它实际上指向了GDT的第0项描述符。所以第0项需要时空的，而LDT就不需要。
 
 ##### 4. 从实模式转换到保护模式：
+
+> ​		由于我们需要进入保护模式，所以暂时可以先不用管其他的位，只需关注最低位的PE即可， PE是启用保护位(protection enable)，当设置该位的时候即开启了保护模式，系统上电复位的时候该位默认为0，于是便是实模式；当PE置1的时候，进入保护模式，实质上是开启了段级保护，只是进行了分段，没有开启分页机制，如果要开启分页机制的话我们需要同时置位PE和PG。
 
 ```asm
     # 将cr0寄存器中PE对应位置位1，开启保护模式。然后去保护模式对应代码处。
