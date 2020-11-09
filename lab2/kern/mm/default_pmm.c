@@ -122,30 +122,46 @@ default_init_memmap(struct Page *base, size_t n) {
 static struct Page *
 default_alloc_pages(size_t n) {
     assert(n > 0);
+    // 要的页数比剩余free的页数都多，return null
     if (n > nr_free) {
         return NULL;
     }
     struct Page *page = NULL;
     list_entry_t *le = &free_list;
-    // TODO: optimize (next-fit)
+    // 找了一圈后退出 TODO: list有空的头结点吗？有吧。
     while ((le = list_next(le)) != &free_list) {
+        // 找到这个节点所在的基于Page的变量
+        // 这里的page_link就是成员变量的名字，之后会变成宏。。看起来像是一个变量一样，其实不是。
+        // ((type *)((char *)(ptr) - offsetof(type, member)))
+        // #define offsetof(type, member)
+        // ((size_t)(&((type *)0)->member))
+        // le2page, 找到这个le所在page结构体的头指针，其中这个le是page变量的page_link成员变量
         struct Page *p = le2page(le, page_link);
+        // 找到了一个满足的，就把这个空间（的首页）拿出来
         if (p->property >= n) {
             page = p;
             break;
         }
     }
+    //如果找到了可行区域
     if (page != NULL) {
-        list_del(&(page->page_link));
+        // 这个可行区域的空间大于需求空间，拆分，将剩下的一段放到list中【free+list的后面一个】
         if (page->property > n) {
             struct Page *p = page + n;
             p->property = page->property - n;
             SetPageProperty(p);
+            // 加入后来的，p
             list_add_after(&(page->page_link), &(p->page_link));
+            // list_add(&free_list, &(p->page_link));
         }
+        // 删除原来的
+        list_del(&(page->page_link));
+        // 更新空余空间的状态
         nr_free -= n;
+        //page被使用了，所以把它的属性clear掉
         ClearPageProperty(page);
     }
+    // 返回page
     return page;
 }
 
@@ -160,34 +176,37 @@ default_free_pages(struct Page *base, size_t n) {
     }
     base->property = n;
     SetPageProperty(base);
-    list_entry_t *le = list_next(&free_list);
-    while (le != &free_list) {
-        p = le2page(le, page_link);
-        le = list_next(le);
-        // TODO: optimize
-        if (base + base->property == p) {
-            base->property += p->property;
-            ClearPageProperty(p);
-            list_del(&(p->page_link));
-        }
-        else if (p + p->property == base) {
+     list_entry_t *next_entry = list_next(&free_list);
+    // 找到base的前一块空块的后一块
+    while (next_entry != &free_list && le2page(next_entry, page_link) < base)
+        next_entry = list_next(next_entry);
+    // 找到前面那块
+    list_entry_t *prev_entry = list_prev(next_entry);
+    // 找到insert的位置
+    list_entry_t *insert_entry = prev_entry;
+    // 如果和前一块挨在一起，就和前一块合并
+    if (prev_entry != &free_list) {
+        p = le2page(prev_entry, page_link);
+        if (p + p->property == base) {
             p->property += base->property;
             ClearPageProperty(base);
             base = p;
-            list_del(&(p->page_link));
+            insert_entry = list_prev(prev_entry);
+            list_del(prev_entry);
         }
     }
+	// 后一块
+    if (next_entry != &free_list) {
+        p = le2page(next_entry, page_link);
+        if (base + base->property == p) {
+            base->property += p->property;
+            ClearPageProperty(p);
+            list_del(next_entry);
+        }
+    }
+    // 加一下
     nr_free += n;
-    le = list_next(&free_list);
-    while (le != &free_list) {
-        p = le2page(le, page_link);
-        if (base + base->property <= p) {
-            assert(base + base->property != p);
-            break;
-        }
-        le = list_next(le);
-    }
-    list_add_before(le, &(base->page_link));
+    list_add(insert_entry, &(base->page_link));
 }
 
 static size_t

@@ -30,28 +30,19 @@ static struct gatedesc idt[256] = {{0}};
 static struct pseudodesc idt_pd = {
     sizeof(idt) - 1, (uintptr_t)idt
 };
-
 /* idt_init - initialize IDT to each of the entry points in kern/trap/vectors.S */
 void
 idt_init(void) {
-     /* LAB1 YOUR CODE : STEP 2 */
-     /* (1) Where are the entry addrs of each Interrupt Service Routine (ISR)?
-      *     All ISR's entry addrs are stored in __vectors. where is uintptr_t __vectors[] ?
-      *     __vectors[] is in kern/trap/vector.S which is produced by tools/vector.c
-      *     (try "make" command in lab1, then you will find vector.S in kern/trap DIR)
-      *     You can use  "extern uintptr_t __vectors[];" to define this extern variable which will be used later.
-      * (2) Now you should setup the entries of ISR in Interrupt Description Table (IDT).
-      *     Can you see idt[256] in this file? Yes, it's IDT! you can use SETGATE macro to setup each item of IDT
-      * (3) After setup the contents of IDT, you will let CPU know where is the IDT by using 'lidt' instruction.
-      *     You don't know the meaning of this instruction? just google it! and check the libs/x86.h to know more.
-      *     Notice: the argument of lidt is idt_pd. try to find it!
-      */
-    extern uintptr_t __vectors[];
-    int i;
-    for (i = 0; i < sizeof(idt) / sizeof(struct gatedesc); i ++) {
-        SETGATE(idt[i], 0, GD_KTEXT, __vectors[i], DPL_KERNEL);
-    }
+    extern uintptr_t __vectors[]; //_vevtors数组保存在vectors.S中的256个中断处理例程的入口地址
+
+    for (int i=0;i<sizeof(idt);i+=sizeof(struct gatedesc))
+        SETGATE(idt[i],0,GD_KTEXT,__vectors[i],DPL_KERNEL);
+ /*循环调用SETGATE函数对中断门idt[i]依次进行初始化
+   其中第一个参数为初始化模板idt[i]；第二个参数为0，表示中断门；第三个参数GD_KTEXT为内核代码段的起始地址；第四个参数_vector[i]为中断处理例程的入口地址；第五个参数表示内核权限\*/
+    SETGATE(idt[T_SWITCH_TOK],0,GD_KTEXT,__vectors[T_SWITCH_TOK],DPL_USER);
+
     lidt(&idt_pd);
+//加载idt中断描述符表，并将&idt_pd的首地址加载到IDTR中
 }
 
 static const char *
@@ -146,16 +137,18 @@ trap_dispatch(struct trapframe *tf) {
     char c;
 
     switch (tf->tf_trapno) {
-    case IRQ_OFFSET + IRQ_TIMER:
+    case IRQ_OFFSET + IRQ_TIMER: 
+
         /* LAB1 YOUR CODE : STEP 3 */
         /* handle the timer interrupt */
         /* (1) After a timer interrupt, you should record this event using a global variable (increase it), such as ticks in kern/driver/clock.c
          * (2) Every TICK_NUM cycle, you can print some info using a funciton, such as print_ticks().
          * (3) Too Simple? Yes, I think so!
          */
-        ticks ++;
+ ticks ++;
         if (ticks % TICK_NUM == 0) {
             print_ticks();
+ticks=0;
         }
         break;
     case IRQ_OFFSET + IRQ_COM1:
@@ -168,8 +161,24 @@ trap_dispatch(struct trapframe *tf) {
         break;
     //LAB1 CHALLENGE 1 : YOUR CODE you should modify below codes.
     case T_SWITCH_TOU:
+        if (tf->tf_cs != USER_CS) { //要保证自己再对应的模式中
+            struct trapframe trap_temp = *tf; //临时栈
+            trap_temp.tf_cs=USER_CS;//更改代码段
+            trap_temp.tf_ds=trap_temp.tf_es=trap_temp.tf_ss=USER_DS;//更改数据段
+            trap_temp.tf_esp=(uint32_t)tf+sizeof(struct trapframe)-8;//更改ESP
+            trap_temp.tf_eflags|=FL_IOPL_MASK;//更改EFLAGS,不然在转换时会发生IO权限异常
+            *((uint32_t*)tf-1)=&trap_temp;//因为从内核栈切换到用户栈,所以修改栈顶地址
+        }
+        break;
     case T_SWITCH_TOK:
-        panic("T_SWITCH_** ??\n");
+        if (tf->tf_cs != KERNEL_CS) {
+            tf->tf_cs = KERNEL_CS;
+            tf->tf_ds = tf->tf_es = KERNEL_DS;
+            tf->tf_eflags &= ~FL_IOPL_MASK;
+            int offset = tf->tf_esp - (sizeof(struct trapframe)-8); //修改后少了esp和ss需要进行偏移
+            __memmove(offset,tf,sizeof(struct trapframe)-8);
+            *((uint32_t*)tf-1)=offset; //重新设置栈帧地址
+        }
         break;
     case IRQ_OFFSET + IRQ_IDE1:
     case IRQ_OFFSET + IRQ_IDE2:
