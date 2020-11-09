@@ -877,7 +877,7 @@ debuginfo_eip(uintptr_t addr, struct eipdebuginfo *info) {
     stabstr = __STABSTR_BEGIN__;
   100678:	c7 45 ec e9 cf 10 00 	movl   $0x10cfe9,-0x14(%ebp)
     stabstr_end = __STABSTR_END__;
-  10067f:	c7 45 e8 f0 f0 10 00 	movl   $0x10f0f0,-0x18(%ebp)
+  10067f:	c7 45 e8 ef f0 10 00 	movl   $0x10f0ef,-0x18(%ebp)
 
     // String table validity checks
     if (stabstr_end <= stabstr || stabstr_end[-1] != 0) {
@@ -3666,7 +3666,7 @@ ticks=0;
   101e95:	0f b7 40 3c          	movzwl 0x3c(%eax),%eax
   101e99:	83 f8 1b             	cmp    $0x1b,%eax
   101e9c:	0f 84 8b 01 00 00    	je     10202d <trap_dispatch+0x2a6>
-            struct trapframe atrapfream = *tf; //临时栈
+            struct trapframe trap_temp = *tf; //临时栈
   101ea2:	8b 4d 08             	mov    0x8(%ebp),%ecx
   101ea5:	b8 4c 00 00 00       	mov    $0x4c,%eax
   101eaa:	83 e0 fc             	and    $0xfffffffc,%eax
@@ -3677,23 +3677,23 @@ ticks=0;
   101ebe:	83 c0 04             	add    $0x4,%eax
   101ec1:	39 d8                	cmp    %ebx,%eax
   101ec3:	72 ef                	jb     101eb4 <trap_dispatch+0x12d>
-            atrapfream.tf_cs=USER_CS;//更改代码段
+            trap_temp.tf_cs=USER_CS;//更改代码段
   101ec5:	66 c7 45 a0 1b 00    	movw   $0x1b,-0x60(%ebp)
-            atrapfream.tf_ds=atrapfream.tf_es=atrapfream.tf_ss=USER_DS;//更改数据段
+            trap_temp.tf_ds=trap_temp.tf_es=trap_temp.tf_ss=USER_DS;//更改数据段
   101ecb:	66 c7 45 ac 23 00    	movw   $0x23,-0x54(%ebp)
   101ed1:	0f b7 45 ac          	movzwl -0x54(%ebp),%eax
   101ed5:	66 89 45 8c          	mov    %ax,-0x74(%ebp)
   101ed9:	0f b7 45 8c          	movzwl -0x74(%ebp),%eax
   101edd:	66 89 45 90          	mov    %ax,-0x70(%ebp)
-            atrapfream.tf_esp=(uint32_t)tf+sizeof(struct trapframe)-8;//更改ESP
+            trap_temp.tf_esp=(uint32_t)tf+sizeof(struct trapframe)-8;//更改ESP
   101ee1:	8b 45 08             	mov    0x8(%ebp),%eax
   101ee4:	83 c0 44             	add    $0x44,%eax
   101ee7:	89 45 a8             	mov    %eax,-0x58(%ebp)
-            atrapfream.tf_eflags|=FL_IOPL_MASK;//更改EFLAGS,不然在转换时会发生IO权限异常
+            trap_temp.tf_eflags|=FL_IOPL_MASK;//更改EFLAGS,不然在转换时会发生IO权限异常
   101eea:	8b 45 a4             	mov    -0x5c(%ebp),%eax
   101eed:	0d 00 30 00 00       	or     $0x3000,%eax
   101ef2:	89 45 a4             	mov    %eax,-0x5c(%ebp)
-            *((uint32_t*)tf-1)=&atrapfream;//因为从内核栈切换到用户栈,所以修改栈顶地址
+            *((uint32_t*)tf-1)=&trap_temp;//因为从内核栈切换到用户栈,所以修改栈顶地址
   101ef5:	8b 45 08             	mov    0x8(%ebp),%eax
   101ef8:	8d 50 fc             	lea    -0x4(%eax),%edx
   101efb:	8d 85 64 ff ff ff    	lea    -0x9c(%ebp),%eax
@@ -3724,12 +3724,12 @@ ticks=0;
   101f43:	89 c2                	mov    %eax,%edx
   101f45:	8b 45 08             	mov    0x8(%ebp),%eax
   101f48:	89 50 40             	mov    %edx,0x40(%eax)
-            int offset = tf->tf_esp - (sizeof(struct trapframe) - 8); //修改后少了esp和ss需要进行偏移
+            int offset = tf->tf_esp - (sizeof(struct trapframe)-8); //修改后少了esp和ss需要进行偏移
   101f4b:	8b 45 08             	mov    0x8(%ebp),%eax
   101f4e:	8b 40 44             	mov    0x44(%eax),%eax
   101f51:	83 e8 44             	sub    $0x44,%eax
   101f54:	89 45 e4             	mov    %eax,-0x1c(%ebp)
-            __memmove(offset,tf,sizeof(struct trapframe) - 8);
+            __memmove(offset,tf,sizeof(struct trapframe)-8);
   101f57:	8b 45 e4             	mov    -0x1c(%ebp),%eax
   101f5a:	89 45 dc             	mov    %eax,-0x24(%ebp)
   101f5d:	8b 45 08             	mov    0x8(%ebp),%eax
@@ -3801,7 +3801,7 @@ __memmove(void *dst, const void *src, size_t n) {
   101fe1:	89 45 b0             	mov    %eax,-0x50(%ebp)
     return dst;
   101fe4:	90                   	nop
-            *((uint32_t*)tf - 1) = offset; //重新设置栈帧地址
+            *((uint32_t*)tf-1)=offset; //重新设置栈帧地址
   101fe5:	8b 45 08             	mov    0x8(%ebp),%eax
   101fe8:	8d 50 fc             	lea    -0x4(%eax),%edx
   101feb:	8b 45 e4             	mov    -0x1c(%ebp),%eax
