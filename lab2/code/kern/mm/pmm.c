@@ -380,6 +380,39 @@ get_pte(pde_t *pgdir, uintptr_t la, bool create) {
     }
     return NULL;          // (8) return page table entry
 #endif
+
+
+    // 段机制后得到的地址是linear_addr, ucore中目前va = la
+
+    pde_t *pdep = &pgdir[PDX(la)]; // find page directory entry 找到它的一级页表项（指针），PDX，线性地址的前十位，pgdir是页目录表的起始逻辑地址
+    if(!(*pdep & PTE_P)) // check if entry is not present 页目录项的最低位是PTE_P，标记当前页目录项对应的页表空间是否存在  如果存在（证明二级页表）存在，在二级页表中找到，并直接返回
+    {   
+        /*if(!create||(page=alloc_page())==NULL) // check if creating is needed, then alloc page for page table 不要求create，直接返回
+            return NULL;
+        // 否则alloc a page，建立二级页表，（成功的话）并设置这个page的ref为1，将内存也清空。
+
+        set_page_ref(page, 1); //set page reference
+        uintptr_t pa = page2pa(page);  // get linear address of page
+        memset(KADDR(pa), 0, PGSIZE); //clear page content using memset
+        // 在一级页表中，设置该二级页表入口
+        *pdep = (pa & ~0xFFF) | PTE_P | PTE_W | PTE_U;//set page directory entry's permission 表示页表物理地址 对应的页表空间现在已经存在、具有可写权限、用户态下可访问*/
+if(!create) // 不要求create，直接返回
+            return NULL;
+        // 否则alloc a page，建立二级页表，（成功的话）并设置这个page的ref为1，将内存也清空。
+        struct Page* page = alloc_page(); 
+        if(page == NULL)
+            return NULL;
+        set_page_ref(page, 1); 
+        uintptr_t pa = page2pa(page);  // 页清空
+        memset(KADDR(pa), 0, PGSIZE);
+        // 在一级页表中，设置该二级页表入口
+        *pdep = (pa & ~0xFFF) | PTE_P | PTE_W | PTE_U;
+    }
+    // PDE_ADDR 就是取了个 &，因为设置的时候取了 |。 得到的是二级页表真正的物理地址。
+    // (pte_t *)KADDR(PDE_ADDR(*pdep)): 将物理地址转换为 二级页表的核虚拟地址
+    // [PTX(la)] 加上la中相对二级页表的偏移
+    // 取地址，返回
+    return &((pte_t *)KADDR(PDE_ADDR(*pdep)))[PTX(la)];  // return page table entry (*pdep)是物理地址
 }
 
 //get_page - get related Page struct for linear address la using PDT pgdir
@@ -425,6 +458,20 @@ page_remove_pte(pde_t *pgdir, uintptr_t la, pte_t *ptep) {
                                   //(6) flush tlb
     }
 #endif
+
+
+   if (*ptep & PTE_P) { // (1) 如果二级页表项存在
+        struct Page *page = pte2page(*ptep); // (2)找到这个二级页表项对应的page
+        if (page_ref_dec(page) == 0) // (3) 自减该page的ref，如果为0，则free该page
+            free_page(page);//(4)
+        *ptep = 0; //(5)将该page table entry置0
+         // 先检查此时cpu使用的一级页表是不是pgdir，如果是，则在快表中，invalidate对应的线性地址。[la 是]
+         // 如果不是，则它根本不在快表中。
+         // 底层调用invlpg，[INVLPG m 使包含 m(地址) 的页对应TLB项目失效]
+         // la应该就是page对应的线性地址吧。。
+        tlb_invalidate(pgdir, la); //(6)
+    }
+
 }
 
 //page_remove - free an Page which is related linear address la and has an validated pte
